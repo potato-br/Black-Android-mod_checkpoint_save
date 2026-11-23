@@ -1,4 +1,26 @@
-the mod is here on the git just download it alone or the full project and run the apk and boommm you have save checkpoints
+The mod is available here on GitHub. Just download it separately or download the entire project, install the APK, and boommm! You've got save checkpoints!
+
+Important: The game's original files are NOT included. You still need to follow the rest of the guide normally to set everything up.
+
+Sorry if is in PT-BR. It's my main language, and I don't really plan on changing it, butttt...
+
+If you create a file named checkpoint_label.txt inside:
+
+Android/data/com.racas.black/files/
+
+You can customize the checkpoint notification with whatever text you want!
+
+Just remember to use:
+
+{c} where the checkpoint number should appear.
+
+{m} where the mission number should appear.
+
+You can pretty much create your own message, for example:
+
+"I stopped at checkpoint {c} on mission {m}"
+
+Have fun! :D
 
 
 
