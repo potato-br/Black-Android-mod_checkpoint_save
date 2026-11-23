@@ -23,6 +23,7 @@
 #include "common/mouse_keyboard.h"
 #include "common/options.h"
 #include "common/translations.h"
+#include "game/checkpoint.h"
 #include "game/weapons.h"
 
 // native/gyro.cpp: aiming by turning the phone
@@ -250,7 +251,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlu
              kCheckUpdates, kTouchSensitivity, kLeftDeadzone, kRightDeadzone, kLeftSensitivity, kRightSensitivity,
              kScreenFilter, kGyroInvertX, kGyroInvertY, kUnlockLevels, kUnlockBlackOps, kTouchSkin, kCredit, kBloom,
              kFog, kAntiAliasing, kHdr, kEsp, kAimbot, kTouchStick, kDynamicRes, kDynamicTarget, kDynamicMin,
-             kDynamicMax, kDynamicHold, kAutoUpdate };
+             kDynamicMax, kDynamicHold, kAutoUpdate, kContinueCheckpoint };
 
 using rows::Kind;
 using rows::Row;
@@ -314,6 +315,8 @@ constexpr Row kGeneralRows[] = {
     {Kind::Heading, -1, "UPDATES"},
     {Kind::Value, kCheckUpdates, "CHECK FOR UPDATES"},
     {Kind::Value, kAutoUpdate, "STARTUP UPDATE CHECK"},
+    {Kind::Heading, -1, "CHECKPOINT"},
+    {Kind::Value, kContinueCheckpoint, "CONTINUE FROM LAST CHECKPOINT"},
 };
 
 
@@ -639,6 +642,11 @@ void StepInputRow(int id, int step, char (&text)[64]) {
             std::snprintf(text, sizeof(text), format, kLanguageNames[i]);
             break;
         }
+        case kContinueCheckpoint:
+            // any step loads the checkpoint the game kept on disk; the row shows what is saved, or why it did not go
+            if (step) checkpoint::Continue();
+            std::snprintf(text, sizeof(text), "%s", checkpoint::Label().c_str());
+            break;
         case kAutoUpdate:
             // kept in the activity's preferences: it is read at launch, before the game's settings
             if (step) host::SetStartupCheck(!host::StartupCheck());
@@ -1068,7 +1076,8 @@ bool rows::Enabled(const Row& row) {
 
 bool rows::Opens(const Row& row) {
     // the credits' rows have no arrows: the links open, the rest do nothing
-    return row.kind == Kind::Value && (row.id == kTouchEdit || row.id == kCheckUpdates || row.id == kCredit);
+    return row.kind == Kind::Value && (row.id == kTouchEdit || row.id == kCheckUpdates || row.id == kCredit ||
+                                      row.id == kContinueCheckpoint);
 }
 
 bool MenuOpen() { return g_open.load(std::memory_order_relaxed); }

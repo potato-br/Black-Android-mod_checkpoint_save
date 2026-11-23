@@ -1,8 +1,11 @@
 // Quit on the main menu, as the SCDA recomp has: a QUIT button under the title menu's own opens the game's
 // ConfirmWarning page with its unused "are you sure you want to quit?" text. Yes closes the app, No goes back.
 // CREDITS between the title menu's own and QUIT opens the options page as the credits (options_menu.cpp).
+// LAST CHECKPOINT, when a checkpoint is kept on disk, goes between them and CREDITS: it loads that checkpoint
+// (checkpoint.cpp), the confirm taken here so the page never opens.
 // Back on the title menu, which did nothing on the console, opens the same page. The page is the pause menu's and
 // imports its sounds from PAudio, so on the front end its sound clips take the title menu's FEAudio ones.
+#include <algorithm>
 #include <cstring>
 #include <iterator>
 #include <string>
@@ -13,6 +16,7 @@
 
 #include "app/app.h"
 #include "common/translations.h"
+#include "game/checkpoint.h"
 #include "core/log.h"
 #include "game/flash.h"
 #include "game/layout.h"
@@ -56,6 +60,9 @@ constexpr char kButtonName[] = "QuitButton";
 constexpr char kButtonDepth[] = "100";
 constexpr char kCreditsName[] = "CreditsButton";
 constexpr char kCreditsDepth[] = "101";
+constexpr char kCheckpointName[] = "CheckpointButton";
+constexpr char kCheckpointDepth[] = "102";
+constexpr char kCheckpointText[] = "$RC_CHECKPOINT";  // a string of ours, game::MenuText
 constexpr char kCreditsText[] = "$RC_CREDITS";  // a string of ours, game::MenuText
 constexpr char kOptionsPage[] = "OptionsMenuXbox";
 constexpr float kPitch = 25.0f;  // between the stock buttons
@@ -167,6 +174,25 @@ const char* AddCredits(X86Context& ctx, const TitleMenu& title, uint32_t root, u
     return nullptr;
 }
 
+// LAST CHECKPOINT under the last stock button, in the ring between it and CREDITS; the confirm is taken in
+// UpdateCheckpoint, the page it names is only what a stock button needs to have
+const char* AddCheckpoint(X86Context& ctx, const TitleMenu& title, uint32_t root, uint32_t holder, uint32_t lead,
+                          uint32_t credits) {
+    uint32_t button = CopyButton(ctx, title, holder, kCheckpointName, kCheckpointDepth);
+    if (!button) return "checkpoint copy";
+    uint32_t field = flash::FindField(button, nullptr);
+    if (!field || !flash::Set(ctx, field, "variable", flash::String(ctx, kCheckpointText))) return "checkpoint label";
+    Follow(button, lead, 1);
+    CallGuest(ctx, flash::kRunActions, {R32(flash::kPlayer)});
+    uint32_t first = Member(ctx, root, title.first);
+    uint32_t last = Member(ctx, root, title.last);
+    if (!first || !last || !flash::Button(ctx, button, first)) return "checkpoint ring";
+    if (!flash::Set(ctx, button, "actionSelectPage", flash::String(ctx, kOptionsPage))) return "checkpoint page";
+    flash::Link(ctx, last, button);
+    flash::Link(ctx, button, credits);
+    return nullptr;
+}
+
 void ReportOnce(const char* page, const char* what) {
     if (g_reported) return;
     g_reported = true;
@@ -180,12 +206,20 @@ void UpdateButton(X86Context& ctx, uint32_t ui, const TitleMenu& title, uint32_t
     if (!flash::IsClip(lead)) return;
     uint32_t quit = Member(ctx, holder, kButtonName);
     uint32_t credits = Member(ctx, holder, kCreditsName);
-    if (quit) Follow(quit, lead, 2);
-    if (credits) Follow(credits, lead, 1);
+    uint32_t checkpoint = Member(ctx, holder, kCheckpointName);
+    // LAST CHECKPOINT, when there is one, takes the row under the stock buttons and the others go down one
+    int shift = checkpoint ? 1 : 0;
+    if (quit) Follow(quit, lead, 2 + shift);
+    if (credits) Follow(credits, lead, 1 + shift);
+    if (checkpoint) Follow(checkpoint, lead, 1);
     if ((quit && credits) || R32(ui + kPageLeaving) || R32(ui + kPageAsked) == 1) return;
     const char* failed = quit ? nullptr : AddButton(ctx, title, root, holder, lead);
     if (!failed && !(quit = Member(ctx, holder, kButtonName))) failed = "quit lookup";
     if (!failed) failed = AddCredits(ctx, title, root, holder, lead, quit);
+    if (!failed && checkpoint::HasSave()) {
+        uint32_t added = Member(ctx, holder, kCreditsName);
+        failed = added ? AddCheckpoint(ctx, title, root, holder, lead, added) : "checkpoint credits lookup";
+    }
     if (failed) {
         ReportOnce(title.page, failed);
     } else {
@@ -200,6 +234,18 @@ void UpdateCredits(X86Context& ctx, uint32_t ui, const TitleMenu& title, uint32_
     uint32_t credits = Member(ctx, Member(ctx, Member(ctx, root, "Main"), "TextAnim"), kCreditsName);
     uint32_t focus = Member(ctx, Member(ctx, root, "MyMenu"), "mFocusButton");
     if (credits && focus == credits) game::OpenCredits(title.page);
+}
+
+// a confirm on LAST CHECKPOINT: its input is taken, so the page does not open, and the checkpoint loads
+void UpdateCheckpoint(X86Context& ctx, uint32_t ui, uint32_t root) {
+    if (R32(ui + kPageLeaving) || R32(ui + kPageAsked) == 1 || !InputTaken(ui)) return;
+    if (R32(ui + kMenuInput) != kInputConfirm) return;
+    uint32_t button = Member(ctx, Member(ctx, Member(ctx, root, "Main"), "TextAnim"), kCheckpointName);
+    uint32_t focus = Member(ctx, Member(ctx, root, "MyMenu"), "mFocusButton");
+    if (!button || focus != button) return;
+    W32(ui + kMenuInput, 0);
+    LOGI("quit: LAST CHECKPOINT chosen on the title menu");
+    checkpoint::Continue();
 }
 
 uint32_t ClipCharacter(X86Context& ctx, uint32_t root, const char* name) {
@@ -299,6 +345,7 @@ void Tick(X86Context& ctx, uint32_t ui) {
         ReleaseTitleAudio();
         UpdateButton(ctx, ui, *title, root);
         UpdateCredits(ctx, ui, *title, root);
+        UpdateCheckpoint(ctx, ui, root);
         ApplyQuestion(ctx, ui, *title, root);
     }
     if (confirm) UpdateConfirm(ctx, ui, root);
@@ -308,17 +355,29 @@ void Tick(X86Context& ctx, uint32_t ui) {
 
 namespace game {
 
-// prompts.cpp's string lookup: CREDITS's text, 0 for any other id
+// prompts.cpp's string lookup: the title menu buttons' text, 0 for any other id
 uint32_t MenuText(uint32_t id) {
-    static const uint32_t kId = flash::StringId(kCreditsText + 1);
-    static uint32_t text = 0;
-    if (id != kId) return 0;
-    if (!text) {
-        std::string credits = app::Ui("CREDITS");
-        text = mem::AllocSystem(uint32_t(credits.size() + 1));
-        std::memcpy(HostPtr(text), credits.c_str(), credits.size() + 1);
+    static const uint32_t kCreditsId = flash::StringId(kCreditsText + 1);
+    static const uint32_t kCheckpointId = flash::StringId(kCheckpointText + 1);
+    static uint32_t credits_text = 0;
+    static uint32_t checkpoint_text = 0;
+    if (id == kCheckpointId) {
+        // the numbers of the checkpoint kept, written into the same buffer at each lookup
+        constexpr uint32_t kSize = 192;
+        std::string text = checkpoint::ButtonText();
+        if (!checkpoint_text) checkpoint_text = mem::AllocSystem(kSize);
+        size_t n = std::min<size_t>(text.size(), kSize - 1);
+        std::memcpy(HostPtr(checkpoint_text), text.c_str(), n);
+        static_cast<char*>(HostPtr(checkpoint_text))[n] = 0;
+        return checkpoint_text;
     }
-    return text;
+    if (id != kCreditsId) return 0;
+    if (!credits_text) {
+        std::string text = app::Ui("CREDITS");
+        credits_text = mem::AllocSystem(uint32_t(text.size() + 1));
+        std::memcpy(HostPtr(credits_text), text.c_str(), text.size() + 1);
+    }
+    return credits_text;
 }
 
 }  // namespace game

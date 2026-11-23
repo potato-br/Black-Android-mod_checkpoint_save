@@ -144,8 +144,10 @@ X86_FUNC(sub_001F9130) { Return(ctx, ctx.eax, 1); }
 
 // The Flash menus and HUD tick in milliseconds, 33 a call: the real ones, the part of one carried over
 void WeaponsTick(X86Context& ctx);  // weapons.cpp: the weapons page's requests
+void CheckpointTick(X86Context& ctx);  // checkpoint.cpp: CONTINUE FROM LAST CHECKPOINT
 void MenuTick(X86Context& ctx, uint8_t*) {
     WeaponsTick(ctx);
+    CheckpointTick(ctx);
     using clock = std::chrono::steady_clock;
     static clock::time_point last;
     static float carry;
